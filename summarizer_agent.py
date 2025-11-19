@@ -3,23 +3,11 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 # from PyPDF2 import PdfReader
-# import os
-# from dotenv import load_dotenv
-
-# if os.path.exists(".env"):
-#     load_dotenv()
-#     print("Environment variables loaded from .env file.")
+from utils import initialize_component
 
 
-# # Access the API key
-# api_key = os.getenv("OPENAI_API_KEY")
-
-# if api_key:
-#     print("API Key loaded successfully!")
-# else:
-#     print("API Key not found. Please check your .env file.")
-
-llm = ChatOpenAI(model="gpt-4", temperature=0)
+# Initialiser un LLM via la fonction centralisée
+llm = initialize_component("LLM", {"model": "gpt-4", "temperature": 0})
 
 def summarize_law_text(law_text):
     """
@@ -31,11 +19,9 @@ def summarize_law_text(law_text):
     Returns:
         str: Résumé intelligible du texte de loi.
     """
-
-
     messages = [
         SystemMessage(content="Tu es un assistant juridique spécialisé dans les lois françaises."),
-        HumanMessage(content=f"Voici un texte de loi :\n{law_text}\n\nRédige un résumé clair, concis et compréhensible pour un citoyen lambda.\n\nRésumé :")
+        HumanMessage(content=f"Voici un texte de loi :\n{law_text}\n\nRédige un résumé clair, concis et compréhensible pour un citoyen lambda. N'hésite pas à simplifier le jargon juridique de manière pédagogique.\n\nRésumé :")
     ]
 
     prompt = ChatPromptTemplate.from_messages(messages)

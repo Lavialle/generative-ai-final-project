@@ -8,3 +8,5 @@ langchain_text_splitters
 langfuse
 google-search-results
 qdrant-client
+pypdf
+langchain-qdrant

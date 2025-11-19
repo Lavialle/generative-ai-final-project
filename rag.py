@@ -4,43 +4,62 @@ from typing import List
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import Qdrant
+from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
+from utils import initialize_component
 
 # Global variables
 embeddings = None
 vectorstore = None
 llm = None
 collection_name = "rag_documents"
+# Chemin pour la persistance de Qdrant sur disque
+QDRANT_PATH = "./data/qdrant_db"
 
 def initialize_components():
-    """Initialize embeddings, LLM, and Qdrant connection"""
+    """
+    Initialise les composants : embeddings, LLM, et Qdrant.
+    
+    Utilise Qdrant en mode PERSISTANT (sauvegarde automatique sur disque).
+    Plus besoin de save_index() manuel !
+    """
     global embeddings, llm, vectorstore
 
     if not os.getenv("OPENAI_API_KEY"):
         raise ValueError("OPENAI_API_KEY not found in environment variables!")
 
+    # 1. Créer les embeddings OpenAI
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    
+    # 2. Créer le LLM
+    llm = initialize_component("LLM", {"model": "gpt-4", "temperature": 0})
 
-    client = QdrantClient(location=":memory:")
+    # 3. Créer le client Qdrant en mode PERSISTANT (sur disque)
+    os.makedirs(QDRANT_PATH, exist_ok=True)
+    client = QdrantClient(path=QDRANT_PATH)  # Sauvegarde automatique !
+    
+    # 4. Créer la collection si elle n'existe pas
     try:
         client.get_collection(collection_name)
+        print(f"✅ Collection '{collection_name}' existante chargée")
     except Exception:
         client.create_collection(
             collection_name=collection_name,
             vectors_config=VectorParams(
-                size=1536,
+                size=1536,  # Dimension de text-embedding-3-small
                 distance=Distance.COSINE
             )
         )
+        print(f"✅ Nouvelle collection '{collection_name}' créée")
 
-    vectorstore = Qdrant(
+    # 5. Créer le vectorstore LangChain
+    vectorstore = QdrantVectorStore(
         client=client,
         collection_name=collection_name,
-        embeddings=embeddings
+        embedding=embeddings
     )
+    
     return "✅ Components initialized successfully!"
 
 def load_document(file_path: str) -> List[Document]:
@@ -77,45 +96,68 @@ def index_documents(files: List[str]) -> str:
     return f"✅ Indexed {len(chunks)} chunks from {len(files)} files."
 
 def rag_agent(query: str):
-    """Perform RAG-based retrieval and answer generation"""
+    """
+    Effectue une recherche RAG simple et génère une réponse.
+    
+    NOTE: Cette fonction est simplifiée. Utilisez rag_agent_with_sources() 
+    pour des réponses plus détaillées avec citations.
+    
+    Args:
+        query: Question de l'utilisateur
+        
+    Returns:
+        str: Réponse générée
+    """
     global vectorstore, llm
 
     if vectorstore is None or llm is None:
         return "⚠️ Components not initialized!"
 
+    # 1. Récupérer les documents pertinents
     retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-    docs = retriever.get_relevant_documents(query)
+    docs = retriever.invoke(query)
+    
+    # 2. Créer le contexte
     context = "\n".join([doc.page_content for doc in docs])
 
+    # 3. Appeler le LLM avec LangChain (pas de format dict)
+    from langchain_core.messages import SystemMessage, HumanMessage
     messages = [
-        {"role": "system", "content": "Use the context below to answer the question."},
-        {"role": "user", "content": f"Context: {context}\n\nQuestion: {query}"}
+        SystemMessage(content="Use the context below to answer the question."),
+        HumanMessage(content=f"Context: {context}\n\nQuestion: {query}")
     ]
-    response = llm(messages)
-    return response["choices"][0]["message"]["content"]
+    response = llm.invoke(messages)
+    return response.content
 
 def rag_agent_with_sources(query: str):
     """
-    Perform RAG-based retrieval and answer generation with source citation.
-
+    Effectue une recherche RAG avec citations détaillées des sources.
+    
+    ÉTAPES :
+    1. Recherche les documents pertinents dans Qdrant
+    2. Organise les documents par source
+    3. Génère une réponse avec le LLM
+    4. Ajoute les citations de sources
+    
     Args:
-        query (str): User's question.
-
+        query: Question de l'utilisateur
+        
     Returns:
-        str: Generated answer with source citations.
+        str: Réponse avec citations des sources
     """
     global vectorstore, llm
 
     if vectorstore is None or llm is None:
         return "⚠️ Components not initialized!"
 
+    # 1. Récupérer les documents pertinents
     retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-    docs = retriever.get_relevant_documents(query)
+    docs = retriever.invoke(query)
 
     if not docs:
         return "⚠️ No relevant documents found. Please index some documents first."
 
-    # Group documents by source for better organization
+    # 2. Organiser les documents par source
     sources_dict = {}
     for doc in docs:
         source = doc.metadata.get("source", "Unknown")
@@ -123,52 +165,50 @@ def rag_agent_with_sources(query: str):
             sources_dict[source] = []
         sources_dict[source].append(doc)
 
-    # Create context with clear source attribution
+    # 3. Créer le contexte avec attribution des sources
     context_parts = []
     for source, source_docs in sources_dict.items():
         for idx, doc in enumerate(source_docs, 1):
-            chunk_preview = doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
             context_parts.append(
-                f"[Document: {source} | Chunk {idx}]\n{chunk_preview}"
+                f"[Document: {source} | Chunk {idx}]\n{doc.page_content[:300]}"
             )
 
     context = "\n\n---\n\n".join(context_parts)
 
-    # Enhanced prompt with better instructions for source citation
+    # 4. Appeler le LLM avec LangChain
+    from langchain_core.messages import SystemMessage, HumanMessage
+    
+    system_prompt = """Tu es un assistant qui répond aux questions en te basant sur les documents fournis.
+
+INSTRUCTIONS IMPORTANTES :
+1. Synthétise les informations de TOUS les documents pertinents
+2. Cite toujours le nom et la référence de la loi source si présente
+3. Si la réponse n'est pas dans le contexte, dis-le clairement
+4. Sois clair et structuré dans ta réponse"""
+
+    user_prompt = f"""Contexte des documents indexés :
+
+{context}
+
+Question : {query}
+
+Fournis une réponse complète en citant les documents sources."""
+
     messages = [
-        {"role": "system", "content": """
-        You are a helpful assistant that answers questions based on the provided context from multiple documents.
-
-        IMPORTANT INSTRUCTIONS:
-        1. Synthesize information from ALL relevant documents provided in the context.
-        2. If information appears in multiple documents, mention all relevant sources.
-        3. Always cite the specific document name when referencing information.
-        4. If the answer cannot be found in the context, explicitly state this.
-        5. Be comprehensive and draw connections between information from different documents when relevant.
-        6. Format your answer clearly with proper structure.
-        """},
-        {"role": "user", "content": f"""
-        Context from indexed documents:
-
-        {context}
-
-        Question: {query}
-
-        Provide a comprehensive answer based on the context above. Cite specific documents when referencing information.
-        """}
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_prompt)
     ]
 
-    # Generate answer
-    response = llm(messages)
-    answer = response["choices"][0]["message"]["content"]
+    # 5. Générer la réponse
+    response = llm.invoke(messages)
+    answer = response.content
 
-    # Create detailed source information
+    # 6. Ajouter les détails des sources
     unique_sources = list(sources_dict.keys())
     source_count = len(unique_sources)
     chunk_count = len(docs)
 
-    # Build source details with chunk previews
-    sources_section = f"\n\n{'='*60}\n📚 **Sources Used** ({source_count} document(s), {chunk_count} chunk(s))\n{'='*60}\n\n"
+    sources_section = f"\n\n{'='*60}\n📚 **Sources Utilisées** ({source_count} document(s), {chunk_count} chunk(s))\n{'='*60}\n\n"
 
     for source, source_docs in sources_dict.items():
         sources_section += f"📄 **{source}** ({len(source_docs)} chunk(s))\n"
@@ -178,7 +218,151 @@ def rag_agent_with_sources(query: str):
                 preview += "..."
             sources_section += f"   • Chunk {idx}: _{preview}_\n"
         if len(source_docs) > 3:
-            sources_section += f"   • ... and {len(source_docs) - 3} more chunk(s)\n"
+            sources_section += f"   • ... et {len(source_docs) - 3} chunk(s) de plus\n"
         sources_section += "\n"
 
     return f"{answer}{sources_section}"
+
+def rag_agent_with_metadata(query: str):
+    """
+    Reformule une question et génère des métadonnées enrichies, y compris un titre basé sur 'Proposition de loi'.
+
+    Args:
+        query (str): Question utilisateur.
+
+    Returns:
+        dict: Contexte reformulé et métadonnées enrichies.
+    """
+    global vectorstore, llm
+
+    if vectorstore is None or llm is None:
+        return {"error": "⚠️ Components not initialized!"}
+
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    docs = retriever.invoke(query)
+
+    if not docs:
+        return {"error": "⚠️ No relevant documents found. Please index some documents first."}
+
+    # Générer un titre basé sur le contenu des documents
+    title = "Proposition de loi : " + (docs[0].metadata.get("title") or "Titre inconnu")
+
+    # Créer un contexte à partir des documents
+    context = "\n".join([doc.page_content for doc in docs])
+
+    return {
+        "title": title,
+        "context": context,
+        "documents": docs
+    }
+
+def train_rag_with_pdfs(pdf_folder: str):
+    """
+    Entraîner le RAG avec les fichiers PDF d'un dossier donné.
+
+    Args:
+        pdf_folder (str): Chemin vers le dossier contenant les fichiers PDF.
+
+    Returns:
+        str: Résultat de l'indexation.
+    """
+    global vectorstore
+
+    if vectorstore is None:
+        return "⚠️ Components not initialized!"
+
+    from pathlib import Path
+
+    pdf_files = list(Path(pdf_folder).glob("*.pdf"))
+    if not pdf_files:
+        return "⚠️ Aucun fichier PDF trouvé dans le dossier spécifié."
+
+    all_documents = []
+    for pdf_file in pdf_files:
+        docs = load_document(str(pdf_file))
+        for doc in docs:
+            doc.metadata["source"] = pdf_file.name
+        all_documents.extend(docs)
+
+    # Découper les documents en chunks
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+        separators=["\n\n", "\n", ". ", " ", ""]
+    )
+    chunks = text_splitter.split_documents(all_documents)
+
+    # Ajouter les chunks au magasin vectoriel
+    vectorstore.add_documents(chunks)
+    return f"✅ Indexation terminée : {len(chunks)} chunks ajoutés à partir de {len(pdf_files)} fichiers PDF."
+
+def save_index(index_path: str = None):
+    """
+    FONCTION OBSOLÈTE - Plus nécessaire !
+    
+    Avec Qdrant en mode persistant (path=QDRANT_PATH), 
+    l'index est AUTOMATIQUEMENT sauvegardé sur disque.
+    
+    Cette fonction ne fait rien mais reste pour la compatibilité.
+    """
+    global vectorstore
+    if vectorstore is None:
+        return "⚠️ Vectorstore not initialized!"
+    
+    # Qdrant sauvegarde automatiquement, rien à faire !
+    return f"✅ Index déjà sauvegardé automatiquement dans {QDRANT_PATH}"
+
+def load_index(index_path: str = None):
+    """
+    FONCTION OBSOLÈTE - Plus nécessaire !
+    
+    Avec Qdrant en mode persistant, l'index est AUTOMATIQUEMENT chargé
+    au démarrage via initialize_components().
+    
+    Cette fonction ne fait rien mais reste pour la compatibilité.
+    """
+    return f"✅ Index déjà chargé automatiquement depuis {QDRANT_PATH}"
+
+def clear_index() -> str:
+    """
+    Réinitialise complètement l'index vectoriel.
+    
+    ATTENTION : Cela supprime TOUS les documents indexés !
+    """
+    global vectorstore, embeddings
+
+    if vectorstore is None:
+        return "⚠️ Vectorstore not initialized!"
+
+    try:
+        # 1. Récupérer le client Qdrant
+        client = vectorstore.client
+        
+        # 2. Supprimer la collection existante
+        try:
+            client.delete_collection(collection_name)
+            print(f"🗑️ Collection '{collection_name}' supprimée")
+        except Exception as e:
+            print(f"⚠️ Erreur lors de la suppression : {e}")
+
+        # 3. Recréer une collection vide
+        client.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(
+                size=1536,
+                distance=Distance.COSINE
+            )
+        )
+        print(f"✅ Nouvelle collection '{collection_name}' créée")
+
+        # 4. Recréer le vectorstore
+        vectorstore = QdrantVectorStore(
+            client=client,
+            collection_name=collection_name,
+            embedding=embeddings
+        )
+
+        return "✅ Index réinitialisé avec succès !"
+    except Exception as e:
+        return f"❌ Erreur lors de la réinitialisation : {str(e)}"
+

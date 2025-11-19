@@ -1,13 +1,14 @@
 from langchain.tools import tool
 from langchain.agents import create_agent
-from langchain.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from rag import rag_agent_with_sources
 from summarizer_agent import summarize_law_text
 from tone_analysis_agent import analyze_tone_of_voice
+from config import OPENAI_API_KEY, SERP_API_KEY
 
-# Tool : Recherche dans Qdrant avec attribution des sources
-@tool("search_rag_tool", description="Effectue une recherche dans l'index vectoriel pour trouver des documents pertinents avec attribution des sources.")
-def search_tool(query: str):
+# Tool : Reformuler la question et générer des métadonnées
+@tool("reformulate_and_metadata_tool", description="Reformule une question et génère des métadonnées enrichies, y compris un titre basé sur 'Proposition de loi'.")
+def reformulate_and_metadata_tool(query: str):
     response = rag_agent_with_sources(query)
     return response
 
@@ -16,21 +17,19 @@ def search_tool(query: str):
 def summarize_tool(law_text: str):
     return summarize_law_text(law_text)
 
-
 # Tool : Analyse du tone of voice
 @tool("tone_analysis_tool", description="Analyse le tone of voice des médias à propos d'un texte de loi.")
-def tone_analysis_tool(law_text: str):
-    return analyze_tone_of_voice(law_text)
+def tone_analysis_tool(law_title: str):
+    return analyze_tone_of_voice(law_title)
 
-# Initialiser le modèle de langage
-llm = ChatOpenAI(model="gpt-4", temperature=0)
-
-# Créer l'agent
-agent = create_agent(
-    tools=[search_tool, summarize_tool, tone_analysis_tool],
-    llm=llm,
-    agent_type="zero-shot-react-description"
+# Initialiser le modèle
+model = ChatOpenAI(
+    model="gpt-5",
+    temperature=0.1,
 )
+
+# Créer l'agent avec le modèle et les outils
+agent = create_agent(model, tools=[reformulate_and_metadata_tool, summarize_tool, tone_analysis_tool])
 
 # Pipeline principale
 def pipeline(question: str):
@@ -43,6 +42,21 @@ def pipeline(question: str):
     Returns:
         dict: Résultats combinés.
     """
-    # Appeler l'agent pour traiter la question
-    response = agent.run({"query": question})
-    return response
+
+    # Étape 1 : Reformuler la question et générer des métadonnées
+    metadata_response = agent.run({"query": question})
+
+    # Extraire le titre généré
+    law_title = metadata_response.get("title", "Proposition de loi inconnue")
+
+    # Étape 2 : Résumer le texte de loi
+    summary = summarize_tool(metadata_response.get("context", ""))
+
+    # Étape 3 : Analyser le tone of voice
+    tone_analysis = tone_analysis_tool(law_title)
+
+    return {
+        "metadata": metadata_response,
+        "summary": summary,
+        "tone_analysis": tone_analysis
+    }
