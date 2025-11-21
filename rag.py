@@ -3,11 +3,14 @@ from pathlib import Path
 from typing import List
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
+from langchain_openai import ChatOpenAI
 from qdrant_client.models import Distance, VectorParams
-from utils import initialize_component
+from pathlib import Path
+from config import OPENAI_API_KEY
 
 # Global variables
 embeddings = None
@@ -21,8 +24,7 @@ def initialize_components():
     """
     Initialise les composants : embeddings, LLM, et Qdrant.
     
-    Utilise Qdrant en mode PERSISTANT (sauvegarde automatique sur disque).
-    Plus besoin de save_index() manuel !
+    Utilise Qdrant en mode PERSISTANT
     """
     global embeddings, llm, vectorstore
 
@@ -30,10 +32,10 @@ def initialize_components():
         raise ValueError("OPENAI_API_KEY not found in environment variables!")
 
     # 1. Créer les embeddings OpenAI
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_API_KEY)
     
     # 2. Créer le LLM
-    llm = initialize_component("LLM", {"model": "gpt-4", "temperature": 0})
+    llm = ChatOpenAI(model="gpt-4", temperature=0.1, openai_api_key=OPENAI_API_KEY)
 
     # 3. Créer le client Qdrant en mode PERSISTANT (sur disque)
     os.makedirs(QDRANT_PATH, exist_ok=True)
@@ -95,69 +97,65 @@ def index_documents(files: List[str]) -> str:
     vectorstore.add_documents(chunks)
     return f"✅ Indexed {len(chunks)} chunks from {len(files)} files."
 
-def rag_agent(query: str):
+def rag_agent_with_sources_conversational(query: str, chat_history: list = None):
     """
-    Effectue une recherche RAG simple et génère une réponse.
+    Agent RAG conversationnel avec mémoire de conversation.
     
-    NOTE: Cette fonction est simplifiée. Utilisez rag_agent_with_sources() 
-    pour des réponses plus détaillées avec citations.
+    Gère les questions de suivi en tenant compte de l'historique.
     
     Args:
-        query: Question de l'utilisateur
+        query: Question actuelle de l'utilisateur
+        chat_history: Liste des messages précédents [{"role": "user/assistant", "content": "..."}]
         
     Returns:
-        str: Réponse générée
+        str: Réponse avec sources
     """
     global vectorstore, llm
 
     if vectorstore is None or llm is None:
         return "⚠️ Components not initialized!"
 
-    # 1. Récupérer les documents pertinents
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-    docs = retriever.invoke(query)
-    
-    # 2. Créer le contexte
-    context = "\n".join([doc.page_content for doc in docs])
+    if chat_history is None:
+        chat_history = []
 
-    # 3. Appeler le LLM avec LangChain (pas de format dict)
-    from langchain_core.messages import SystemMessage, HumanMessage
-    messages = [
-        SystemMessage(content="Use the context below to answer the question."),
-        HumanMessage(content=f"Context: {context}\n\nQuestion: {query}")
-    ]
-    response = llm.invoke(messages)
-    return response.content
-
-def rag_agent_with_sources(query: str):
-    """
-    Effectue une recherche RAG avec citations détaillées des sources.
-    
-    ÉTAPES :
-    1. Recherche les documents pertinents dans Qdrant
-    2. Organise les documents par source
-    3. Génère une réponse avec le LLM
-    4. Ajoute les citations de sources
-    
-    Args:
-        query: Question de l'utilisateur
+    # 1. Reformuler la question en tenant compte du contexte conversationnel
+    if chat_history:
+        # Construire le contexte conversationnel
+        conversation_context = "\n".join([
+            f"{'Utilisateur' if msg['role'] == 'user' else 'Assistant'}: {msg['content']}"
+            for msg in chat_history[-6:]  # Garder seulement les 6 derniers messages
+        ])
         
-    Returns:
-        str: Réponse avec citations des sources
-    """
-    global vectorstore, llm
+        reformulation_prompt = f"""Contexte de conversation précédente :
+{conversation_context}
 
-    if vectorstore is None or llm is None:
-        return "⚠️ Components not initialized!"
+Question actuelle : {query}
 
-    # 1. Récupérer les documents pertinents
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-    docs = retriever.invoke(query)
+Si la question actuelle fait référence à un élément de la conversation précédente (ex: "Et pour les enfants ?", "Peux-tu préciser ?", "Qu'en est-il de...", etc.), 
+reformule-la en une question autonome complète qui inclut le contexte nécessaire.
+
+Si la question est déjà autonome, retourne-la telle quelle.
+
+Retourne UNIQUEMENT la question reformulée, sans explication."""
+
+        reformulation_messages = [
+            SystemMessage(content="Tu es un assistant qui reformule les questions pour les rendre autonomes."),
+            HumanMessage(content=reformulation_prompt)
+        ]
+        
+        reformulated = llm.invoke(reformulation_messages)
+        search_query = reformulated.content.strip()
+    else:
+        search_query = query
+
+    # 2. Recherche vectorielle avec la question (reformulée ou originale)
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
+    docs = retriever.invoke(search_query)
 
     if not docs:
-        return "⚠️ No relevant documents found. Please index some documents first."
+        return "⚠️ Aucun document pertinent trouvé. Veuillez d'abord indexer des documents."
 
-    # 2. Organiser les documents par source
+    # 3. Organiser les documents par source
     sources_dict = {}
     for doc in docs:
         source = doc.metadata.get("source", "Unknown")
@@ -165,96 +163,76 @@ def rag_agent_with_sources(query: str):
             sources_dict[source] = []
         sources_dict[source].append(doc)
 
-    # 3. Créer le contexte avec attribution des sources
+    # 4. Créer le contexte documentaire
     context_parts = []
     for source, source_docs in sources_dict.items():
         for idx, doc in enumerate(source_docs, 1):
             context_parts.append(
-                f"[Document: {source} | Chunk {idx}]\n{doc.page_content[:300]}"
+                f"[Document: {source} | Chunk {idx}]\n{doc.page_content[:500]}"
             )
 
-    context = "\n\n---\n\n".join(context_parts)
+    doc_context = "\n\n---\n\n".join(context_parts)
 
-    # 4. Appeler le LLM avec LangChain
-    from langchain_core.messages import SystemMessage, HumanMessage
-    
-    system_prompt = """Tu es un assistant qui répond aux questions en te basant sur les documents fournis.
+    # 5. Construire le prompt avec historique conversationnel
+    system_prompt = """Tu es LuXas, un assistant juridique pédagogue spécialisé dans les propositions de loi de l'Assemblée Nationale française.
 
-INSTRUCTIONS IMPORTANTES :
-1. Synthétise les informations de TOUS les documents pertinents
-2. Cite toujours le nom et la référence de la loi source si présente
-3. Si la réponse n'est pas dans le contexte, dis-le clairement
-4. Sois clair et structuré dans ta réponse"""
+INSTRUCTIONS CRITIQUES - ANTI-HALLUCINATION :
+1. **Tu ne réponds QUE si l'information est dans les documents fournis**
+2. Si l'info n'est pas dans les documents, réponds : "Je n'ai pas trouvé cette information dans les documents indexés."
+3. **JAMAIS d'invention** : ne crée pas de noms de loi, dates, ou articles qui ne sont pas dans les documents
+4. Cite TOUJOURS les sources exactes (nom du document)
+5. Si une question fait référence à la conversation précédente, utilise l'historique pour comprendre le contexte
+6. Structure tes réponses clairement et utilise un langage pédagogique
+7. Si tu utilises des termes juridiques complexes, propose une définition simple avec exemple
 
-    user_prompt = f"""Contexte des documents indexés :
+RÈGLE D'OR : En cas de doute, dis que tu n'as pas l'information plutôt que d'inventer."""
 
-{context}
+    # Construire l'historique conversationnel pour le contexte
+    conversation_context = ""
+    if chat_history:
+        conversation_context = "Historique de conversation :\n"
+        for msg in chat_history[-4:]:  # Garder les 4 derniers échanges
+            role = "Utilisateur" if msg['role'] == 'user' else "Assistant"
+            conversation_context += f"{role}: {msg['content'][:200]}...\n"
+        conversation_context += "\n"
 
-Question : {query}
+    user_prompt = f"""{conversation_context}Documents disponibles :
 
-Fournis une réponse complète en citant les documents sources."""
+{doc_context}
+
+Question actuelle : {query}
+
+Réponds à la question en te basant UNIQUEMENT sur les documents fournis. Cite tes sources."""
 
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_prompt)
     ]
 
-    # 5. Générer la réponse
+    # 6. Générer la réponse
     response = llm.invoke(messages)
     answer = response.content
 
-    # 6. Ajouter les détails des sources
+    # 7. Ajouter les sources
     unique_sources = list(sources_dict.keys())
     source_count = len(unique_sources)
     chunk_count = len(docs)
 
-    sources_section = f"\n\n{'='*60}\n📚 **Sources Utilisées** ({source_count} document(s), {chunk_count} chunk(s))\n{'='*60}\n\n"
+    sources_section = f"\n\n{'='*60}\n📚 **Sources Consultées** ({source_count} document(s), {chunk_count} chunk(s))\n{'='*60}\n\n"
 
     for source, source_docs in sources_dict.items():
         sources_section += f"📄 **{source}** ({len(source_docs)} chunk(s))\n"
-        for idx, doc in enumerate(source_docs[:3], 1):
-            preview = doc.page_content[:150].replace("\n", " ").strip()
-            if len(doc.page_content) > 150:
+        for idx, doc in enumerate(source_docs[:2], 1):
+            preview = doc.page_content[:120].replace("\n", " ").strip()
+            if len(doc.page_content) > 120:
                 preview += "..."
-            sources_section += f"   • Chunk {idx}: _{preview}_\n"
-        if len(source_docs) > 3:
-            sources_section += f"   • ... et {len(source_docs) - 3} chunk(s) de plus\n"
+            sources_section += f"   • Extrait {idx}: _{preview}_\n"
+        if len(source_docs) > 2:
+            sources_section += f"   • ... et {len(source_docs) - 2} autre(s) extrait(s)\n"
         sources_section += "\n"
 
     return f"{answer}{sources_section}"
 
-def rag_agent_with_metadata(query: str):
-    """
-    Reformule une question et génère des métadonnées enrichies, y compris un titre basé sur 'Proposition de loi'.
-
-    Args:
-        query (str): Question utilisateur.
-
-    Returns:
-        dict: Contexte reformulé et métadonnées enrichies.
-    """
-    global vectorstore, llm
-
-    if vectorstore is None or llm is None:
-        return {"error": "⚠️ Components not initialized!"}
-
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-    docs = retriever.invoke(query)
-
-    if not docs:
-        return {"error": "⚠️ No relevant documents found. Please index some documents first."}
-
-    # Générer un titre basé sur le contenu des documents
-    title = "Proposition de loi : " + (docs[0].metadata.get("title") or "Titre inconnu")
-
-    # Créer un contexte à partir des documents
-    context = "\n".join([doc.page_content for doc in docs])
-
-    return {
-        "title": title,
-        "context": context,
-        "documents": docs
-    }
 
 def train_rag_with_pdfs(pdf_folder: str):
     """
@@ -270,8 +248,6 @@ def train_rag_with_pdfs(pdf_folder: str):
 
     if vectorstore is None:
         return "⚠️ Components not initialized!"
-
-    from pathlib import Path
 
     pdf_files = list(Path(pdf_folder).glob("*.pdf"))
     if not pdf_files:
@@ -295,33 +271,6 @@ def train_rag_with_pdfs(pdf_folder: str):
     # Ajouter les chunks au magasin vectoriel
     vectorstore.add_documents(chunks)
     return f"✅ Indexation terminée : {len(chunks)} chunks ajoutés à partir de {len(pdf_files)} fichiers PDF."
-
-def save_index(index_path: str = None):
-    """
-    FONCTION OBSOLÈTE - Plus nécessaire !
-    
-    Avec Qdrant en mode persistant (path=QDRANT_PATH), 
-    l'index est AUTOMATIQUEMENT sauvegardé sur disque.
-    
-    Cette fonction ne fait rien mais reste pour la compatibilité.
-    """
-    global vectorstore
-    if vectorstore is None:
-        return "⚠️ Vectorstore not initialized!"
-    
-    # Qdrant sauvegarde automatiquement, rien à faire !
-    return f"✅ Index déjà sauvegardé automatiquement dans {QDRANT_PATH}"
-
-def load_index(index_path: str = None):
-    """
-    FONCTION OBSOLÈTE - Plus nécessaire !
-    
-    Avec Qdrant en mode persistant, l'index est AUTOMATIQUEMENT chargé
-    au démarrage via initialize_components().
-    
-    Cette fonction ne fait rien mais reste pour la compatibilité.
-    """
-    return f"✅ Index déjà chargé automatiquement depuis {QDRANT_PATH}"
 
 def clear_index() -> str:
     """
@@ -366,3 +315,5 @@ def clear_index() -> str:
     except Exception as e:
         return f"❌ Erreur lors de la réinitialisation : {str(e)}"
 
+# initialize_components()
+# train_rag_with_pdfs("data/")

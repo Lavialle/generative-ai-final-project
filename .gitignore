@@ -16,3 +16,9 @@ venv/
 # Ignore environment files
 .env
 .env.*
+
+# PDF local database
+db_local_pdfs/
+
+# Qdrant database
+data/qdrant_db/

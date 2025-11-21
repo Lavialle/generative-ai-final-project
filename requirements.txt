@@ -10,3 +10,7 @@ google-search-results
 qdrant-client
 pypdf
 langchain-qdrant
+pandas
+polars
+boto3
+tqdm
