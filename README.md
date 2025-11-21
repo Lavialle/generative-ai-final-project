@@ -12,6 +12,8 @@ An intelligent assistant for analyzing legislative documents from the French Nat
 
 ## 🏗️ Architecture & Sequencing
 
+### Architecture diagram
+
 ```mermaid
 graph TD
     A[User] --> B[Streamlit Interface<br>app_chatbot.py]
@@ -21,6 +23,8 @@ graph TD
     D --> F[OpenAI<br>Embeddings]
     D --> G[OpenAI<br>GPT-4]
 ```
+
+### Sequencing diagram
 
 ```mermaid
 sequenceDiagram

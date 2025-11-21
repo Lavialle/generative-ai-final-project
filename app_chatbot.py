@@ -11,7 +11,7 @@ st.title("🏛️ LuXas : Assistant Juridique pour l'Assemblée Nationale")
 
 # Zone principale
 st.markdown("""
-### 💬 Posez vos questions sur les propositions de loi
+### 💬 Posez vos questions sur les textes de loi
 **Conversation intelligente** : Vous pouvez poser des questions de suivi comme "Et pour les enfants ?" ou "Peux-tu préciser ?"
 """)
 
