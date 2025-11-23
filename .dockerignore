@@ -1,0 +1,7 @@
+# Ignorer les fichiers inutiles
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+data/qdrant_db/

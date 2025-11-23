@@ -1,5 +1,5 @@
 from typing import TypedDict, List, Dict
-from rag import rag_agent_with_sources_conversational
+from rag import rag_agent_with_sources_conversational, initialize_components, embeddings
 
 # Définir l'état du chatbot avec mémoire conversationnelle
 class ChatbotState(TypedDict):
@@ -18,6 +18,12 @@ def interact_with_chatbot(user_message: str, chat_history: List[Dict[str, str]] 
     Returns:
         str: Réponse du chatbot avec sources
     """
+    # Initialiser les composants si ce n'est pas encore fait (lazy loading)
+    if embeddings is None:
+        print("🔧 Initialisation des composants RAG...")
+        initialize_components()
+        print("✅ Composants prêts!")
+    
     if chat_history is None:
         chat_history = []
     
