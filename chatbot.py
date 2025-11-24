@@ -1,12 +1,8 @@
-from typing import TypedDict, List, Dict
+from typing import List, Dict
 from rag import rag_agent_with_sources_conversational, initialize_components, embeddings
+from langfuse import observe
 
-# Définir l'état du chatbot avec mémoire conversationnelle
-class ChatbotState(TypedDict):
-    user_message: str
-    bot_response: str
-    chat_history: List[Dict[str, str]]  # Historique de conversation
-
+@observe()
 def interact_with_chatbot(user_message: str, chat_history: List[Dict[str, str]] = None):
     """
     Interagit avec le chatbot RAG conversationnel.

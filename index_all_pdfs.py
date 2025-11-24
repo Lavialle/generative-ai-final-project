@@ -8,10 +8,10 @@ OPTIMISATIONS :
 - Reprise en cas d'échec
 """
 
-import os
 from pathlib import Path
 from tqdm import tqdm
-from rag import initialize_components, load_document, vectorstore
+from rag import initialize_components, vectorstore
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Configuration
@@ -75,7 +75,8 @@ def index_all_pdfs_in_batches():
         # Charger les PDFs du batch
         for pdf_file in tqdm(batch_files, desc="Chargement", unit="PDF"):
             try:
-                docs = load_document(str(pdf_file))
+                loader = PyPDFLoader(str(pdf_file))
+                docs = loader.load()
                 
                 # Ajouter les métadonnées
                 for doc in docs:

@@ -7,7 +7,6 @@ Permet de migrer votre base locale vers le cloud pour :
 - Performance optimale
 """
 
-import os
 from pathlib import Path
 from tqdm import tqdm
 from langchain_community.document_loaders import PyPDFLoader
@@ -16,7 +15,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
-from config import OPENAI_API_KEY, QDRANT_API_KEY, QDRANT_CLOUD_URL
+from config import QDRANT_API_KEY, QDRANT_CLOUD_URL
 
 # Configuration Qdrant Cloud
 COLLECTION_NAME = "rag_documents"
@@ -47,7 +46,6 @@ def index_pdfs_to_cloud():
     print("🔧 Initialisation des embeddings OpenAI...")
     embeddings = OpenAIEmbeddings(
         model="text-embedding-3-small",
-        openai_api_key=OPENAI_API_KEY
     )
     
     # 3. Créer ou récupérer la collection

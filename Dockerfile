@@ -9,7 +9,7 @@ COPY requirements.txt .
 
 # Installer les dépendances (cette couche sera mise en cache si requirements.txt ne change pas)
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir --use-feature=fast-deps -r requirements.txt
 
 # Copier le reste des fichiers de l'application
 COPY . /app

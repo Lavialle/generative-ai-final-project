@@ -1,6 +1,6 @@
 # 🏛️ LuXas - Conversational Legal Assistant with RAG
 
-An intelligent assistant for analyzing legislative documents from the French National Assembly, based on a Retrieval-Augmented Generation (RAG) conversational system.
+An intelligent assistant for analyzing legislative documents from the French Assemblée Nationale, based on a Retrieval-Augmented Generation (RAG) conversational system.
 
 ## 🎯 Features
 
@@ -19,9 +19,9 @@ graph TD
     A[User] --> B[Streamlit Interface<br>app_chatbot.py]
     B --> C[Chatbot Logic<br>chatbot.py<br>- Conversation history<br>- Contextual reformulation]
     C --> D[RAG System<br>rag.py<br>- Vector search<br>- Response generation<br>- Source citations]
-    D --> E[Qdrant<br>VectorDB]
-    D --> F[OpenAI<br>Embeddings]
-    D --> G[OpenAI<br>GPT-4]
+    D --> E[Qdrant Cloud<br>Vector Database]
+    D --> F[OpenAI<br>Embeddings API]
+    D --> G[OpenAI<br>GPT-4 API]
 ```
 
 ### Sequencing diagram
@@ -29,22 +29,31 @@ graph TD
 ```mermaid
 sequenceDiagram
     participant User
-    participant index_all_pdfs.py
-    participant Qdrant
+    participant index_to_qdrant_cloud.py
+    participant Qdrant Cloud
+    participant app_chatbot.py
     participant rag.py
-    participant OpenAI_LLM
+    participant OpenAI
 
-    User->>index_all_pdfs.py: Démarre l'indexation des PDF
-    index_all_pdfs.py->>Qdrant: Envoie les vecteurs des PDF indexés
-    Qdrant-->>index_all_pdfs.py: Confirme l'ajout des vecteurs
-    index_all_pdfs.py-->>User: Indexation terminée
+    Note over User,Qdrant Cloud: Indexing Phase (One-time)
+    User->>index_to_qdrant_cloud.py: Run indexing script
+    index_to_qdrant_cloud.py->>OpenAI: Generate embeddings (batches)
+    OpenAI-->>index_to_qdrant_cloud.py: Return embeddings
+    index_to_qdrant_cloud.py->>Qdrant Cloud: Upload vectors (5000 chunks/batch)
+    Qdrant Cloud-->>index_to_qdrant_cloud.py: Confirm storage
+    index_to_qdrant_cloud.py-->>User: Indexing complete
 
-    User->>rag.py: Pose une question
-    rag.py->>Qdrant: Recherche les documents pertinents
-    Qdrant-->>rag.py: Renvoie les documents similaires
-    rag.py->>OpenAI_LLM: Fournit les documents et la question
-    OpenAI_LLM-->>rag.py: Renvoie une réponse générée
-    rag.py-->>User: Affiche la réponse
+    Note over User,OpenAI: Query Phase (Runtime)
+    User->>app_chatbot.py: Ask question
+    app_chatbot.py->>rag.py: Forward query + history
+    rag.py->>OpenAI: Generate query embedding
+    OpenAI-->>rag.py: Return embedding
+    rag.py->>Qdrant Cloud: Vector search (k=10)
+    Qdrant Cloud-->>rag.py: Return relevant chunks
+    rag.py->>OpenAI: Generate answer with context
+    OpenAI-->>rag.py: Return answer
+    rag.py-->>app_chatbot.py: Answer + sources
+    app_chatbot.py-->>User: Display response
 ```
 
 ## 📦 Installation
@@ -77,32 +86,72 @@ pip install -r requirements.txt
 
 ### 5. Configuration
 
-Create a `.env` file at the root:
+Create a `.env` file at the root (use `.env.example` as template):
 
+```bash
+cp .env.example .env
+# Edit .env with your actual API keys
+```
+
+Required variables:
 ```env
 OPENAI_API_KEY=sk-...
+QDRANT_CLOUD_URL=https://your-cluster.gcp.cloud.qdrant.io:6333
+QDRANT_API_KEY=your-qdrant-api-key
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
 ```
 
 ## 🚀 Usage
 
-### Option 1: Use the 4 demo PDFs
+### Option 1: Local Development with Streamlit
 
-```sh
-# The PDFs are already in data/
-# They are automatically indexed at rag.py startup
+```bash
+# Activate virtual environment
+source venv/Scripts/activate  # Windows
+# or
+source venv/bin/activate      # Linux/Mac
 
+# Launch the Streamlit app
 streamlit run app_chatbot.py
 ```
 
-### Option 2: Index 3200+ PDFs
+The app will be available at **http://127.0.0.1:8501/**
 
-```sh
-# 1. Place the PDFs in db_local_pdfs/
-# 2. Run the indexing script (30-35 minutes, ~$1 cost)
-python index_all_pdfs.py
+### Option 2: Docker Deployment
 
-# 3. Launch the interface
-streamlit run app_chatbot.py
+```bash
+# Build the Docker image (1min30s)
+docker-compose build
+
+# Start the container in detached mode
+docker-compose up -d
+
+# View logs
+docker-compose logs -f app
+
+# Stop the container
+docker-compose down
+```
+
+The app will be available at **http://127.0.0.1:8501/**
+
+### Indexing PDFs to Qdrant Cloud
+
+If you need to index new PDFs to Qdrant Cloud:
+
+```bash
+# 1. Place PDFs in db_local_pdfs/
+
+# 2. Run the cloud indexing script
+python index_to_qdrant_cloud.py
+
+# This will:
+# - Process PDFs in batches (max 5000 chunks per batch)
+# - Upload embeddings to Qdrant Cloud
+# - Take ~30-45 minutes for 3200+ PDFs
+# - Cost ~$1 in OpenAI embeddings
 ```
 
 ## 💬 Example Usage
@@ -140,92 +189,80 @@ I can only answer questions related to the provided documents.
 
 ### Indexing (one-time)
 
-- ⏱️ **Time**: 30-35 minutes
-- 💰 **Cost**: ~$1 (OpenAI embeddings)
+- ⏱️ **Time**: 120 minutes
 - 📦 **Result**: ~200,000 vectorized chunks
+- ☁️ **Storage**: Qdrant Cloud (4GB free tier)
+- 🔄 **Batching**: 5000 chunks per batch to avoid timeouts
 
 ### Usage (per question)
 
-- ⏱️ **Response Time**: 2-5 seconds
-- 💰 **Cost**: ~$0.10 per question
+- ⏱️ **Response Time**: 3-8 seconds (includes cloud latency)
 - 📊 **Quality**: Top 10 relevant documents
+- ⏰ **Timeout**: 60 seconds for cloud operations
 
-### Storage
+### Infrastructure
 
-- 💾 **Qdrant DB**: ~2-4 GB (data/qdrant_db/)
-- 📄 **PDFs**: Depends on your collection
-
-## 🧪 Tests
-
-### Test the Conversational System
-
-```sh
-python test_conversational.py
-```
-
-### Test the Basic RAG
-
-```sh
-python test_rag.py
-```
+- ☁️ **Vector DB**: Qdrant Cloud (GCP europe-west3)
+- 🐳 **Deployment**: Docker + docker-compose
+- 📡 **API**: OpenAI text-embedding-3-small + GPT-4
 
 ## 📁 Project Structure
 
 ```
 ├── app_chatbot.py              # Streamlit interface
-├── chatbot.py                  # Conversational logic
-├── rag.py                      # Main RAG system
-├── index_all_pdfs.py          # Massive indexing script
+├── chatbot.py                  # Conversational logic with lazy loading
+├── rag.py                      # Main RAG system (Qdrant Cloud client)
+├── index_to_qdrant_cloud.py    # Cloud indexing script (batch upload)
 ├── config.py                   # API key configuration
-├── requirements.txt            # Dependencies
-├── data/
-│   ├── qdrant_db/             # Vector database (auto-generated)
-│   └── *.pdf                  # Demo PDFs (4 files)
-└── db_local_pdfs/             # All PDFs to index
+├── requirements.txt            # Python dependencies
+├── Dockerfile                  # Docker image definition
+├── docker-compose.yml          # Container orchestration
+├── .env                        # Environment variables
+├── .gitignore
+└── load_pdfs_from_cloud.py     # retrieve pdfs from Scaleaway
 ```
 
 ## 🔧 Advanced Configuration
 
+### Adjust Qdrant Cloud Timeout
+
+In `rag.py`, line ~45:
+
+```python
+client = QdrantClient(
+    url=QDRANT_CLOUD_URL,
+    api_key=QDRANT_API_KEY,
+    timeout=60  # Increase if you get timeout errors
+)
+```
+
 ### Adjust the Number of Retrieved Chunks
 
-In `rag.py`, around line ~125:
+In `rag.py`, line ~165:
 
 ```python
 retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
-# Increase k for more context (but higher cost)
+# Reduce k=5 for faster queries, increase k=15 for more context
 ```
 
 ### Modify Chunk Size
 
-In `rag.py`, around line ~90 and `index_all_pdfs.py`, around line ~16:
+In `index_to_qdrant_cloud.py`, lines 26-28:
 
 ```python
-CHUNK_SIZE = 1000      # Increase for more context per chunk
-CHUNK_OVERLAP = 200    # Overlap for continuity
+MAX_CHUNKS_PER_BATCH = 5000  # Reduce if timeout during indexing
+CHUNK_SIZE = 1000            # Increase for more context per chunk
+CHUNK_OVERLAP = 200          # Overlap for continuity
 ```
 
 ### Change the LLM Model
 
-In `rag.py`, around line ~42:
+In `rag.py`, line ~43:
 
 ```python
-llm = initialize_component("LLM", {"model": "gpt-4", "temperature": 0.1})
+llm = ChatOpenAI(model="gpt-4", temperature=0.1, openai_api_key=OPENAI_API_KEY)
 # Options: "gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"
 ```
-
-## 💰 Cost Estimation
-
-### Initial Indexing (one-time)
-
-- 3200+ PDFs × 10 pages × 2000 chars = ~64M characters
-- Embeddings (text-embedding-3-small): $0.02/1M tokens
-- **Total: ~$1**
-
-### Monthly Usage (1000 questions)
-
-- Input: ~6500 tokens/question × $0.01/1K tokens = $0.065
-- Output: ~500 tokens/question × $0.03/1K tokens = $0.015
-- **Total: ~$80/month for 1000 questions**
 
 ## 🛡️ Anti-Hallucination
 
@@ -236,8 +273,6 @@ The system implements several protections:
 3. **Low Temperature** (0.1): Less creativity = fewer hallucinations
 4. **Mandatory Citations**: All responses include sources
 5. **Contextual Reformulation**: Ambiguous questions are clarified before search
-
-**Estimated Hallucination Rate: <5%**
 
 ## 📈 Future Optimizations (Optional)
 
