@@ -1,0 +1,12 @@
+langchain-openai
+langchain-community
+langchain-core
+streamlit
+langchain_text_splitters
+qdrant-client
+langchain-qdrant
+polars
+boto3
+tqdm
+langfuse
+# sentence-transformers

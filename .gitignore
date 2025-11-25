@@ -4,9 +4,20 @@ __pycache__/
 *$py.class
 
 # Environments
-.env/
 venv/
 
 # IDE files
 .vscode/
 .idea/
+
+# MacOS files
+.DS_Store
+
+# Ignore environment files
+.env
+
+# PDF local database
+db_local_pdfs/
+
+# Qdrant database
+data/qdrant_db/

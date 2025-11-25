@@ -1,0 +1,8 @@
+# Ignorer les fichiers inutiles
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+data/
+db_local_pdfs/
