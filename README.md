@@ -2,7 +2,14 @@
 
 An intelligent assistant for analyzing legislative documents from the French Assemblée Nationale, based on a Retrieval-Augmented Generation (RAG) conversational system.
 
-## 🎯 Features
+## Contributors
+
+- Côme Bonneviale
+- Ange Lavialle
+- Aymeric Mouttapa
+- Léon Pejic
+
+## Features
 
 - ✅ **Conversational RAG**: Understands follow-up questions (e.g., "What about children?", "Can you clarify?")
 - ✅ **Anti-Hallucination**: Responds only with information from indexed documents
@@ -10,7 +17,7 @@ An intelligent assistant for analyzing legislative documents from the French Ass
 - ✅ **ChatGPT-like Interface**: Modern interface with Streamlit
 - ✅ **Scalable**: Optimized to handle 3200+ PDFs
 
-## 🏗️ Architecture & Sequencing
+## Architecture & Sequencing
 
 ### Architecture diagram
 
@@ -56,7 +63,7 @@ sequenceDiagram
     app_chatbot.py-->>User: Display response
 ```
 
-## 📦 Installation
+## Installation
 
 ### 1. Prerequisites
 
@@ -94,6 +101,7 @@ cp .env.example .env
 ```
 
 Required variables:
+
 ```env
 OPENAI_API_KEY=sk-...
 QDRANT_CLOUD_URL=https://your-cluster.gcp.cloud.qdrant.io:6333
@@ -103,7 +111,7 @@ LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
 ```
 
-## 🚀 Usage
+## Usage
 
 ### Option 1: Local Development with Streamlit
 
@@ -164,7 +172,7 @@ python index_to_qdrant_cloud.py
 🤖 Bot: According to the document "PION5894.pdf", legislative proposal n°5894
 aims to strengthen online child protection by imposing...
 
-📚 Sources: PION5894.pdf (3 chunks)
+📚 Sources: dossier_legislatif_5894.pdf (3 chunks)
 
 ---
 
@@ -173,7 +181,7 @@ aims to strengthen online child protection by imposing...
 🤖 Bot: Regarding social media, Article 3 of the same proposal requires platforms
 to verify users' ages...
 
-📚 Sources: PION5894.pdf (2 chunks)
+📚 Sources: dossier_legislatif_5894.pdf (2 chunks)
 ```
 
 ### Out-of-Context Question (Anti-Hallucination)
@@ -185,7 +193,7 @@ to verify users' ages...
 I can only answer questions related to the provided documents.
 ```
 
-## 📊 Performance with 3200+ PDFs
+## Performance with 3200+ PDFs
 
 ### Indexing (one-time)
 
@@ -206,7 +214,7 @@ I can only answer questions related to the provided documents.
 - 🐳 **Deployment**: Docker + docker-compose
 - 📡 **API**: OpenAI text-embedding-3-small + GPT-4
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 ├── app_chatbot.py              # Streamlit interface
@@ -217,6 +225,7 @@ I can only answer questions related to the provided documents.
 ├── requirements.txt            # Python dependencies
 ├── Dockerfile                  # Docker image definition
 ├── docker-compose.yml          # Container orchestration
+├── .dockerignore
 ├── .env                        # Environment variables
 ├── .gitignore
 └── load_pdfs_from_cloud.py     # retrieve pdfs from Scaleaway
@@ -226,7 +235,7 @@ I can only answer questions related to the provided documents.
 
 ### Adjust Qdrant Cloud Timeout
 
-In `rag.py`, line ~45:
+In [`rag.py`](rag.py), line ~45:
 
 ```python
 client = QdrantClient(
@@ -238,7 +247,7 @@ client = QdrantClient(
 
 ### Adjust the Number of Retrieved Chunks
 
-In `rag.py`, line ~165:
+In [`rag.py`](rag.py), line ~165:
 
 ```python
 retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
@@ -247,7 +256,7 @@ retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
 
 ### Modify Chunk Size
 
-In `index_to_qdrant_cloud.py`, lines 26-28:
+In [`index_to_qdrant_cloud.py`](index_to_qdrant_cloud.py), lines 26-28:
 
 ```python
 MAX_CHUNKS_PER_BATCH = 5000  # Reduce if timeout during indexing
@@ -257,14 +266,14 @@ CHUNK_OVERLAP = 200          # Overlap for continuity
 
 ### Change the LLM Model
 
-In `rag.py`, line ~43:
+In [`rag.py`](rag.py), line ~43:
 
 ```python
 llm = ChatOpenAI(model="gpt-4", temperature=0.1, openai_api_key=OPENAI_API_KEY)
 # Options: "gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"
 ```
 
-## 🛡️ Anti-Hallucination
+## Anti-Hallucination
 
 The system implements several protections:
 
@@ -274,7 +283,7 @@ The system implements several protections:
 4. **Mandatory Citations**: All responses include sources
 5. **Contextual Reformulation**: Ambiguous questions are clarified before search
 
-## 📈 Future Optimizations (Optional)
+## Future Optimizations
 
 ### 1. Reranking with Cross-Encoder
 
